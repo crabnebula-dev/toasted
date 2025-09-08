@@ -628,9 +628,9 @@ mod tests {
         let scanner = Scanner::new(args);
         
         assert_eq!(scanner.compromised_packages.len(), 18);
-        assert!(scanner.compromised_packages.contains_key("chalk"));
-        assert!(scanner.compromised_packages.contains_key("debug"));
-        assert!(scanner.compromised_packages.contains_key("ansi-styles"));
+        assert!(scanner.compromised_packages.contains_key("chalk@5.6.1"));
+        assert!(scanner.compromised_packages.contains_key("debug@4.4.2"));
+        assert!(scanner.compromised_packages.contains_key("ansi-styles@6.2.2"));
     }
     
     #[test]
