@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: npm-compromise-scanner:latest
+    container_name: npm-scanner
+    volumes:
+      - ${SCAN_DIR:-./}:/scan:ro
+    command: ["/scan", "--format", "${OUTPUT_FORMAT:-text}"]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    network_mode: none
+    restart: "no"
