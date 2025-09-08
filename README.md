@@ -38,7 +38,7 @@ npm-compromise-scanner -v
 
 ## Compromised Packages Detected
 
-The scanner detects 18 packages that were compromised on September 8th, 2024:
+The scanner detects 18 packages that were found to be compromised on September 8th, 2025:
 - chalk (299.99m weekly downloads)
 - debug (357.6m weekly downloads)
 - ansi-styles (371.41m weekly downloads)
