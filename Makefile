@@ -1,6 +1,6 @@
 .PHONY: all build release install clean test help
 
-BINARY_NAME = npm-compromise-scanner
+BINARY_NAME = toasted
 CARGO = cargo
 INSTALL_PATH = /usr/local/bin
 
@@ -20,7 +20,14 @@ install: release
 	@echo "Installing to $(INSTALL_PATH)..."
 	@sudo cp target/release/$(BINARY_NAME) $(INSTALL_PATH)/
 	@sudo chmod +x $(INSTALL_PATH)/$(BINARY_NAME)
+	@echo "Creating IOC directory..."
+	@mkdir -p ~/.its-toasted/iocs
+	@if [ -d iocs ]; then \
+		cp -f iocs/*.yaml ~/.its-toasted/iocs/ 2>/dev/null || true; \
+		echo "Installed default IOC files"; \
+	fi
 	@echo "Installed successfully!"
+	@echo "IOC files can be placed in: ~/.its-toasted/iocs/"
 
 test:
 	@echo "Running tests..."

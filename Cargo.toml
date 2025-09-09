@@ -1,11 +1,11 @@
 [package]
-name = "npm-compromise-scanner"
+name = "toasted"
 version = "1.0.0"
 edition = "2021"
 authors = ["Denjell <denjell@crabnebula.dev>"]
-description = "High-performance scanner for NPM packages compromised with cryptocurrency-stealing malware"
-license = "MIT"
-repository = "https://github.com/crabnebula-dev/npm-compromise-scanner"
+description = "High-performance scanner for packages compromised with cryptocurrency-stealing malware"
+license = "PolyForm-Noncommercial-1.0.0"
+repository = "https://github.com/crabnebula-dev/toasted"
 keywords = ["npm", "security", "scanner", "malware", "dependencies"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -15,14 +15,16 @@ clap = { version = "4.0", features = ["derive"] }
 colored = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
+serde_yaml = "0.9.33"
 walkdir = "2.4"
+dirs = "6.0"
+semver = "1.0"
 
 [dev-dependencies]
 tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
-criterion = "0.5"
+criterion = "0.7"
 
 # [[bench]]
 # name = "scanner_bench"

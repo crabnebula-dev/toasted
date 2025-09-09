@@ -6,11 +6,12 @@ use std::process;
 use anyhow::{Context, Result};
 use clap::Parser;
 use colored::*;
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use walkdir::WalkDir;
 
-/// NPM Compromised Package Scanner
+/// Toasted - Package Vulnerability Scanner
 /// Detects packages compromised with cryptocurrency-stealing malware
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -30,13 +31,45 @@ struct Args {
     /// Show verbose output
     #[clap(short, long)]
     verbose: bool,
+
+    /// Path to IOC file or directory containing IOC files (YAML or JSON)
+    #[clap(short, long)]
+    ioc: Option<String>,
+
+    /// Skip loading default IOCs from ~/.its-toasted/iocs
+    #[clap(long)]
+    no_default_iocs: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 struct CompromisedPackage {
     name: String,
     version: String,
     weekly_downloads: String,
+    #[serde(default = "default_severity")]
+    severity: String,
+    #[serde(default = "default_registry")]
+    registry: String,
+}
+
+fn default_severity() -> String {
+    "high".to_string()
+}
+
+fn default_registry() -> String {
+    "npm".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+struct IocFile {
+    name: String,
+    description: Option<String>,
+    source: Option<String>,
+    date: Option<String>,
+    #[serde(default = "default_registry")]
+    registry: String,
+    packages: Vec<CompromisedPackage>,
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,49 +149,82 @@ struct PnpmResolution {
 }
 
 struct Scanner {
-    compromised_packages: HashMap<String, CompromisedPackage>,
+    compromised_packages: Vec<CompromisedPackage>,
     results: ScanResults,
     args: Args,
 }
 
 impl Scanner {
-    fn new(args: Args) -> Self {
-        let mut compromised_packages = HashMap::new();
+    fn new(args: Args) -> Result<Self> {
+        let mut compromised_packages = Vec::new();
         
-        // List of compromised packages from the Aikido.dev report with specific versions
-        let packages = vec![
-            ("backslash", "0.2.1", "0.26m"),
-            ("chalk-template", "1.1.1", "3.9m"),
-            ("supports-hyperlinks", "4.1.1", "19.2m"),
-            ("has-ansi", "6.0.1", "12.1m"),
-            ("simple-swizzle", "0.2.3", "26.26m"),
-            ("color-string", "2.1.1", "27.48m"),
-            ("error-ex", "1.3.3", "47.17m"),
-            ("color-name", "2.0.1", "191.71m"),
-            ("is-arrayish", "0.3.3", "73.8m"),
-            ("slice-ansi", "7.1.1", "59.8m"),
-            ("color-convert", "3.1.1", "193.5m"),
-            ("wrap-ansi", "9.0.1", "197.99m"),
-            ("ansi-regex", "6.2.1", "243.64m"),
-            ("supports-color", "10.2.1", "287.1m"),
-            ("strip-ansi", "7.1.1", "261.17m"),
-            ("chalk", "5.6.1", "299.99m"),
-            ("debug", "4.4.2", "357.6m"),
-            ("ansi-styles", "6.2.2", "371.41m"),
-        ];
-        
-        for (name, version, downloads) in packages {
-            compromised_packages.insert(
-                format!("{}@{}", name, version),
-                CompromisedPackage {
-                    name: name.to_string(),
-                    version: version.to_string(),
-                    weekly_downloads: downloads.to_string(),
-                },
-            );
+        // Load IOCs from default location unless disabled
+        if !args.no_default_iocs {
+            if let Some(home_dir) = dirs::home_dir() {
+                let default_ioc_dir = home_dir.join(".its-toasted").join("iocs");
+                if default_ioc_dir.exists() {
+                    if args.verbose {
+                        println!("{} Loading IOCs from {}", "Info:".cyan(), default_ioc_dir.display());
+                    }
+                    compromised_packages = Self::load_iocs(default_ioc_dir.to_str().unwrap())?;
+                }
+            }
         }
         
-        Scanner {
+        // Load IOCs from custom path if specified
+        if let Some(ioc_path) = &args.ioc {
+            if args.verbose {
+                println!("{} Loading IOCs from {}", "Info:".cyan(), ioc_path);
+            }
+            let custom_iocs = Self::load_iocs(ioc_path)?;
+            // Merge custom IOCs with default ones
+            compromised_packages.extend(custom_iocs);
+        }
+        
+        // If no IOCs loaded from files, use built-in list
+        if compromised_packages.is_empty() {
+            if args.verbose {
+                println!("{} Using built-in IOC list", "Info:".cyan());
+            }
+            let packages = vec![
+                ("backslash", "0.2.1", "0.26m", "high", "npm"),
+                ("chalk-template", "1.1.1", "3.9m", "high", "npm"),
+                ("supports-hyperlinks", "4.1.1", "19.2m", "high", "npm"),
+                ("has-ansi", "6.0.1", "12.1m", "high", "npm"),
+                ("simple-swizzle", "0.2.3", "26.26m", "high", "npm"),
+                ("color-string", "2.1.1", "27.48m", "high", "npm"),
+                ("error-ex", "1.3.3", "47.17m", "high", "npm"),
+                ("color-name", "2.0.1", "191.71m", "critical", "npm"),
+                ("is-arrayish", "0.3.3", "73.8m", "high", "npm"),
+                ("slice-ansi", "7.1.1", "59.8m", "high", "npm"),
+                ("color-convert", "3.1.1", "193.5m", "critical", "npm"),
+                ("wrap-ansi", "9.0.1", "197.99m", "critical", "npm"),
+                ("ansi-regex", "6.2.1", "243.64m", "critical", "npm"),
+                ("supports-color", "10.2.1", "287.1m", "critical", "npm"),
+                ("strip-ansi", "7.1.1", "261.17m", "critical", "npm"),
+                ("chalk", "5.6.1", "299.99m", "critical", "npm"),
+                ("debug", "4.4.2", "357.6m", "critical", "npm"),
+                ("ansi-styles", "6.2.2", "371.41m", "critical", "npm"),
+            ];
+            
+            for (name, version, downloads, severity, registry) in packages {
+                compromised_packages.push(
+                    CompromisedPackage {
+                        name: name.to_string(),
+                        version: version.to_string(),
+                        weekly_downloads: downloads.to_string(),
+                        severity: severity.to_string(),
+                        registry: registry.to_string(),
+                    },
+                );
+            }
+        }
+        
+        if args.verbose {
+            println!("{} Total IOCs loaded: {}", "Info:".cyan(), compromised_packages.len());
+        }
+        
+        Ok(Scanner {
             compromised_packages,
             results: ScanResults {
                 scanned_files: 0,
@@ -166,7 +232,65 @@ impl Scanner {
                 errors: Vec::new(),
             },
             args,
+        })
+    }
+    
+    fn load_iocs(path: &str) -> Result<Vec<CompromisedPackage>> {
+        let mut all_packages = Vec::new();
+        let path = Path::new(path);
+        
+        if path.is_file() {
+            Self::load_ioc_file(path, &mut all_packages)?;
+        } else if path.is_dir() {
+            // Load all YAML and JSON files from the directory
+            for entry in fs::read_dir(path)? {
+                let entry = entry?;
+                let file_path = entry.path();
+                if file_path.is_file() {
+                    if let Some(ext) = file_path.extension() {
+                        if ext == "yaml" || ext == "yml" || ext == "json" {
+                            if let Err(e) = Self::load_ioc_file(&file_path, &mut all_packages) {
+                                eprintln!("{} Failed to load IOC file {:?}: {}", 
+                                    "Warning:".yellow(), file_path, e);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            return Err(anyhow::anyhow!("IOC path does not exist: {}", path.display()));
         }
+        
+        Ok(all_packages)
+    }
+    
+    fn load_ioc_file(path: &Path, packages: &mut Vec<CompromisedPackage>) -> Result<()> {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read IOC file: {}", path.display()))?;
+        
+        // Skip empty files
+        if content.trim().is_empty() {
+            eprintln!("{} Skipping empty IOC file: {}", "Warning:".yellow(), path.display());
+            return Ok(());
+        }
+        
+        let ioc_file: IocFile = if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            serde_json::from_str(&content)
+                .with_context(|| format!("Failed to parse JSON IOC file: {}", path.display()))?
+        } else {
+            serde_yaml::from_str(&content)
+                .with_context(|| format!("Failed to parse YAML IOC file: {}", path.display()))?
+        };
+        
+        for mut package in ioc_file.packages {
+            // If package doesn't have a registry, use the file's default
+            if package.registry.is_empty() || package.registry == "npm" {
+                package.registry = ioc_file.registry.clone();
+            }
+            packages.push(package);
+        }
+        
+        Ok(())
     }
     
     fn scan_directory(&mut self, dir: &Path) -> Result<()> {
@@ -274,8 +398,7 @@ impl Scanner {
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
                     
-                    let key = format!("{}@{}", package_name, version);
-                    if self.compromised_packages.contains_key(&key) {
+                    if self.is_package_compromised(package_name, version) {
                         detected.push(DetectedPackage {
                             name: package_name.to_string(),
                             version: version.to_string(),
@@ -302,8 +425,7 @@ impl Scanner {
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
             
-            let key = format!("{}@{}", name, version);
-            if self.compromised_packages.contains_key(&key) {
+            if self.is_package_compromised(name, version) {
                 let path = if parent_path.is_empty() {
                     name.clone()
                 } else {
@@ -370,8 +492,7 @@ impl Scanner {
                     }
                 }
                 
-                let key = format!("{}@{}", package_name, version);
-                if self.compromised_packages.contains_key(&key) {
+                if self.is_package_compromised(package_name, &version) {
                     detected.push(DetectedPackage {
                         name: package_name.to_string(),
                         version,
@@ -401,8 +522,7 @@ impl Scanner {
                             PnpmDependencyVersion::Object(obj) => obj.version,
                         };
                         
-                        let key = format!("{}@{}", name, version);
-                        if self.compromised_packages.contains_key(&key) {
+                        if self.is_package_compromised(&name, &version) {
                             detected.push(DetectedPackage {
                                 name: name.clone(),
                                 version,
@@ -426,8 +546,7 @@ impl Scanner {
                                 "unknown".to_string()
                             };
                             
-                            let key = format!("{}@{}", package_name, version);
-                            if self.compromised_packages.contains_key(&key) {
+                            if self.is_package_compromised(package_name, &version) {
                                 detected.push(DetectedPackage {
                                     name: package_name.to_string(),
                                     version,
@@ -476,8 +595,7 @@ impl Scanner {
                     let version_part = &line[colon_idx + 1..].trim();
                     let version = version_part.trim_matches('\'').trim_matches('"');
                     
-                    let key = format!("{}@{}", package_name, version);
-                    if self.compromised_packages.contains_key(&key) {
+                    if self.is_package_compromised(package_name, version) {
                         detected.push(DetectedPackage {
                             name: package_name.to_string(),
                             version: version.to_string(),
@@ -496,8 +614,7 @@ impl Scanner {
                         let package_name = line[3..at_idx].trim();
                         let version = line[at_idx + 1..colon_idx].trim();
                         
-                        let key = format!("{}@{}", package_name, version);
-                        if self.compromised_packages.contains_key(&key) {
+                        if self.is_package_compromised(package_name, version) {
                             detected.push(DetectedPackage {
                                 name: package_name.to_string(),
                                 version: version.to_string(),
@@ -540,13 +657,25 @@ impl Scanner {
                 println!("{}", "Compromised packages found:".red());
                 
                 for pkg in &finding.packages {
-                    let key = format!("{}@{}", pkg.name, pkg.version);
-                    let downloads = &self.compromised_packages[&key].weekly_downloads;
-                    println!("  {} {}@{}", "●".red(), pkg.name.bold(), pkg.version);
-                    println!("    Location: {}", pkg.location);
-                    println!("    Weekly downloads: {}", downloads);
-                    if pkg.path != pkg.name {
-                        println!("    Dependency path: {}", pkg.path);
+                    if let Some(comp_pkg) = self.get_compromised_package(&pkg.name, &pkg.version) {
+                        let downloads = &comp_pkg.weekly_downloads;
+                        let severity = &comp_pkg.severity;
+                        let registry = &comp_pkg.registry;
+                        let bullet_color = match severity.as_str() {
+                            "critical" => "●".red().bold(),
+                            "high" => "●".red(),
+                            "medium" => "●".yellow(),
+                            "low" => "●".blue(),
+                            _ => "●".white(),
+                        };
+                        println!("  {} {}@{}", bullet_color, pkg.name.bold(), pkg.version);
+                        println!("    Registry: {}", registry);
+                        println!("    Severity: {}", severity);
+                        println!("    Location: {}", pkg.location);
+                        println!("    Weekly downloads: {}", downloads);
+                        if pkg.path != pkg.name {
+                            println!("    Dependency path: {}", pkg.path);
+                        }
                     }
                 }
             }
@@ -571,6 +700,82 @@ impl Scanner {
         println!("\n{}\n", "=".repeat(80));
     }
     
+    fn is_package_compromised(&self, name: &str, version: &str) -> bool {
+        self.compromised_packages.iter().any(|pkg| {
+            if pkg.name != name {
+                return false;
+            }
+            
+            // Check if the version contains range operators
+            if pkg.version.contains('<') || pkg.version.contains('>') || 
+               pkg.version.contains('=') || pkg.version.contains(',') ||
+               pkg.version.contains('-') || pkg.version == "all versions" ||
+               pkg.version.contains("affected") || pkg.version.contains("compromised") ||
+               pkg.version.contains("multiple") {
+                // Try to parse as version requirement
+                if let Ok(version_req) = Self::parse_version_requirement(&pkg.version) {
+                    if let Ok(ver) = Version::parse(version) {
+                        return version_req.matches(&ver);
+                    }
+                }
+                // For special cases like "all versions", "compromised versions", etc.
+                return pkg.version == "all versions" || 
+                       pkg.version.contains("affected") || 
+                       pkg.version.contains("compromised");
+            }
+            
+            // Exact version match
+            pkg.version == version
+        })
+    }
+    
+    fn get_compromised_package(&self, name: &str, version: &str) -> Option<&CompromisedPackage> {
+        self.compromised_packages.iter().find(|pkg| {
+            if pkg.name != name {
+                return false;
+            }
+            
+            // Check if the version contains range operators
+            if pkg.version.contains('<') || pkg.version.contains('>') || 
+               pkg.version.contains('=') || pkg.version.contains(',') ||
+               pkg.version.contains('-') || pkg.version == "all versions" ||
+               pkg.version.contains("affected") || pkg.version.contains("compromised") ||
+               pkg.version.contains("multiple") {
+                // Try to parse as version requirement
+                if let Ok(version_req) = Self::parse_version_requirement(&pkg.version) {
+                    if let Ok(ver) = Version::parse(version) {
+                        return version_req.matches(&ver);
+                    }
+                }
+                // For special cases like "all versions", "compromised versions", etc.
+                return pkg.version == "all versions" || 
+                       pkg.version.contains("affected") || 
+                       pkg.version.contains("compromised");
+            }
+            
+            // Exact version match
+            pkg.version == version
+        })
+    }
+    
+    fn parse_version_requirement(version_str: &str) -> Result<VersionReq> {
+        // Handle complex version strings with multiple constraints
+        let cleaned = version_str
+            .replace(" ", ""); // Remove all spaces first
+        
+        // Handle version ranges with dash notation (e.g., "1.4.0-1.5.12")
+        if cleaned.contains('-') && !cleaned.contains("preview") && !cleaned.contains("rc") {
+            if let Some((start, end)) = cleaned.split_once('-') {
+                // Only treat as range if both parts are valid versions
+                if Version::parse(start).is_ok() && Version::parse(end).is_ok() {
+                    return Ok(VersionReq::parse(&format!(">={},<={}", start, end))?);
+                }
+            }
+        }
+        
+        Ok(VersionReq::parse(&cleaned)?)
+    }
+    
     fn run(&mut self) -> Result<()> {
         let dir = PathBuf::from(&self.args.directory);
         
@@ -589,7 +794,7 @@ impl Scanner {
         }
         
         if self.args.format.as_str() == "text" {
-            println!("{}", "NPM Compromised Package Scanner".blue().bold());
+            println!("{}", "Toasted - Package Vulnerability Scanner".blue().bold());
             println!("{} {}", "Scanning directory:".cyan(), dir.display());
             println!("{} package-lock.json, yarn.lock, pnpm-lock.yaml files", "Looking for:".cyan());
             println!("{}", "=".repeat(80));
@@ -609,7 +814,7 @@ impl Scanner {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let mut scanner = Scanner::new(args);
+    let mut scanner = Scanner::new(args)?;
     scanner.run()
 }
 
@@ -624,13 +829,15 @@ mod tests {
             format: "text".to_string(),
             no_color: false,
             verbose: false,
+            ioc: None,
+            no_default_iocs: true,
         };
-        let scanner = Scanner::new(args);
+        let scanner = Scanner::new(args).unwrap();
         
         assert_eq!(scanner.compromised_packages.len(), 18);
-        assert!(scanner.compromised_packages.contains_key("chalk@5.6.1"));
-        assert!(scanner.compromised_packages.contains_key("debug@4.4.2"));
-        assert!(scanner.compromised_packages.contains_key("ansi-styles@6.2.2"));
+        assert!(scanner.is_package_compromised("chalk", "5.6.1"));
+        assert!(scanner.is_package_compromised("debug", "4.4.2"));
+        assert!(scanner.is_package_compromised("ansi-styles", "6.2.2"));
     }
     
     #[test]
@@ -640,8 +847,10 @@ mod tests {
             format: "text".to_string(),
             no_color: false,
             verbose: false,
+            ioc: None,
+            no_default_iocs: true,
         };
-        let scanner = Scanner::new(args);
+        let scanner = Scanner::new(args).unwrap();
         
         assert!(scanner.is_lockfile("package-lock.json"));
         assert!(scanner.is_lockfile("yarn.lock"));
@@ -649,5 +858,47 @@ mod tests {
         assert!(scanner.is_lockfile("pnpm-lock.yml"));
         assert!(!scanner.is_lockfile("package.json"));
         assert!(!scanner.is_lockfile("README.md"));
+    }
+    
+    #[test]
+    fn test_pnpm_lock_no_vulnerabilities() {
+        // Test that the test-fixtures/pnpm-lock.yaml has no vulnerable dependencies
+        let args = Args {
+            directory: "test-fixtures".to_string(),
+            format: "json".to_string(),
+            no_color: true,
+            verbose: false,
+            ioc: None,
+            no_default_iocs: true,
+        };
+        
+        let mut scanner = Scanner::new(args).unwrap();
+        
+        // Temporarily backup and remove package-lock.json to test only pnpm-lock.yaml
+        let package_lock_path = Path::new("test-fixtures/package-lock.json");
+        let backup_path = Path::new("test-fixtures/package-lock.json.test-backup");
+        let should_restore = package_lock_path.exists();
+        
+        if should_restore {
+            std::fs::rename(package_lock_path, backup_path).ok();
+        }
+        
+        // Scan the test-fixtures directory
+        let result = scanner.scan_directory(Path::new("test-fixtures"));
+        
+        // Restore package-lock.json if it existed
+        if should_restore {
+            std::fs::rename(backup_path, package_lock_path).ok();
+        }
+        
+        assert!(result.is_ok(), "Scanning should succeed");
+        
+        // Verify that a pnpm-lock.yaml file was scanned
+        assert!(scanner.results.scanned_files > 0, "Should have scanned at least one file");
+        
+        // Verify no vulnerable packages were found in pnpm-lock.yaml
+        let pnpm_findings = scanner.results.findings.iter()
+            .any(|f| f.file.to_string_lossy().contains("pnpm-lock.yaml"));
+        assert!(!pnpm_findings, "No vulnerable packages should be found in test-fixtures/pnpm-lock.yaml");
     }
 }

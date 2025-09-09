@@ -1,0 +1,52 @@
+name: "Example Multi-Registry IOC File"
+description: "Example showing how to specify compromised packages across different registries"
+source: "Example for documentation"
+date: "2025-09-09"
+registry: "npmjs"  # Default registry for packages without explicit registry
+
+packages:
+  # NPM packages (using default registry)
+  - name: "example-npm-package"
+    version: "1.0.0"
+    weekly_downloads: "1m"
+    severity: "high"
+    
+  # Python package (overriding default)
+  - name: "example-python-package"
+    version: "2.1.0"
+    weekly_downloads: "500k"
+    severity: "critical"
+    registry: "pypi"
+    
+  # Ruby gem
+  - name: "example-ruby-gem"
+    version: "3.0.0"
+    weekly_downloads: "250k"
+    severity: "medium"
+    registry: "rubygems"
+    
+  # Java/Maven package
+  - name: "com.example:artifact"
+    version: "4.0.0"
+    weekly_downloads: "100k"
+    severity: "high"
+    registry: "maven"
+    
+  # .NET/NuGet package
+  - name: "Example.Package"
+    version: "5.0.0"
+    weekly_downloads: "750k"
+    severity: "critical"
+    registry: "nuget"
+    
+  # Rust crate
+  - name: "example-crate"
+    version: "0.1.0"
+    weekly_downloads: "50k"
+    severity: "low"
+    registry: "crates"
+
+tags:
+  - example
+  - multi-registry
+  - documentation
