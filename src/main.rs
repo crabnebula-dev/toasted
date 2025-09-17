@@ -6,6 +6,7 @@ use std::process;
 use anyhow::{Context, Result};
 use clap::Parser;
 use colored::*;
+use csv::ReaderBuilder;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,6 +37,10 @@ struct Args {
     #[clap(short, long)]
     ioc: Option<String>,
 
+    /// Path to IOC file or directory containing IOC files: package_name, package_version) (YAML or JSON)
+    #[clap(short, long)]
+    csv: Option<String>,
+
     /// Skip loading default IOCs from ~/.its-toasted/iocs
     #[clap(long)]
     no_default_iocs: bool,
@@ -45,11 +50,16 @@ struct Args {
 struct CompromisedPackage {
     name: String,
     version: String,
+    #[serde(default = "default_weekly_downloads")]
     weekly_downloads: String,
     #[serde(default = "default_severity")]
     severity: String,
     #[serde(default = "default_registry")]
     registry: String,
+}
+
+fn default_weekly_downloads() -> String {
+    "unknown".to_string()
 }
 
 fn default_severity() -> String {
@@ -180,8 +190,17 @@ impl Scanner {
             // Merge custom IOCs with default ones
             compromised_packages.extend(custom_iocs);
         }
-        
-        // If no IOCs loaded from files, use built-in list
+
+        if let Some(csv_path) = &args.csv {
+            if args.verbose {
+                println!("{} Loading IOCs from {}", "Info:".cyan(), csv_path);
+            }
+            let custom_iocs = Self::load_csv(csv_path)?;
+            compromised_packages.extend(custom_iocs);
+
+        }
+
+            // If no IOCs loaded from files, use built-in list
         if compromised_packages.is_empty() {
             if args.verbose {
                 println!("{} Using built-in IOC list", "Info:".cyan());
@@ -291,6 +310,19 @@ impl Scanner {
         }
         
         Ok(())
+    }
+
+    fn load_csv(path: &str) -> Result<Vec<CompromisedPackage>> {
+
+        let file = fs::File::open(path)?;
+        let mut reader = ReaderBuilder::new().delimiter(b',').from_reader(file);
+        let records = reader.deserialize();
+        let mut results = Vec::new();
+        for record in records {
+            let record: CompromisedPackage = record?;
+            results.push(record);
+        }
+        Ok(results)
     }
     
     fn scan_directory(&mut self, dir: &Path) -> Result<()> {
@@ -830,6 +862,7 @@ mod tests {
             no_color: false,
             verbose: false,
             ioc: None,
+            csv: None,
             no_default_iocs: true,
         };
         let scanner = Scanner::new(args).unwrap();
@@ -848,6 +881,7 @@ mod tests {
             no_color: false,
             verbose: false,
             ioc: None,
+            csv: None,
             no_default_iocs: true,
         };
         let scanner = Scanner::new(args).unwrap();
@@ -869,6 +903,7 @@ mod tests {
             no_color: true,
             verbose: false,
             ioc: None,
+            csv: None,
             no_default_iocs: true,
         };
         
@@ -900,5 +935,21 @@ mod tests {
         let pnpm_findings = scanner.results.findings.iter()
             .any(|f| f.file.to_string_lossy().contains("pnpm-lock.yaml"));
         assert!(!pnpm_findings, "No vulnerable packages should be found in test-fixtures/pnpm-lock.yaml");
+    }
+
+    #[test]
+    fn test_parse_csv(){
+        // Test that the test-fixtures/pnpm-lock.yaml has no vulnerable dependencies
+        let args = Args {
+            directory: "".to_string(),
+            format: "json".to_string(),
+            no_color: true,
+            verbose: false,
+            ioc: None,
+            csv: Some("test-fixtures/test.csv".to_string()),
+            no_default_iocs: true,
+        };
+        let scanner = Scanner::new(args).unwrap();
+        assert_eq!(scanner.compromised_packages.len(), 10);
     }
 }
